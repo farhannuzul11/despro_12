@@ -12,7 +12,7 @@ import {
 // Import dengan dynamic import untuk menghindari circular dependency
 let database;
 const initializeFirebase = async () => {
-  const firebaseModule = await import('../firebase/config');
+  const firebaseModule = await import('../firebase/config.prod');
   database = firebaseModule.database;
 };
 
