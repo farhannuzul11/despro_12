@@ -1,83 +1,83 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import SensorCard from './SensorCard';
-import { 
-  Thermometer, 
-  Droplets, 
-  Gauge, 
-  Wind, 
-  Zap, 
-  Leaf 
+import TemperatureChart from './TemperatureChart';
+import {
+  Thermometer,
+  Droplets,
+  Gauge,
+  Wind,
+  Zap,
+  Leaf,
+  Play,
+  Square
 } from 'lucide-react';
+import { database } from '../firebase/config';
+import { ref, onValue } from 'firebase/database';
 
-// Import dengan dynamic import untuk menghindari circular dependency
-let database;
-const initializeFirebase = async () => {
-  const firebaseModule = await import('../firebase/config.prod');
-  database = firebaseModule.database;
+const SENSOR_CONFIG = {
+  temperature: {
+    title: 'Suhu',
+    unit: '°C',
+    min: 0,
+    max: 80,
+    optimalRange: { min: 40, max: 65 },
+    description: 'Suhu optimal untuk aktivitas mikroba thermophilic',
+    icon: <Thermometer size={24} />,
+    defaultValue: 55.2
+  },
+  moisture: {
+    title: 'Kelembaban',
+    unit: '%',
+    min: 0,
+    max: 100,
+    optimalRange: { min: 40, max: 60 },
+    description: 'Kelembaban ideal untuk proses pengomposan',
+    icon: <Droplets size={24} />,
+    defaultValue: 52
+  },
+  ph: {
+    title: 'pH Level',
+    unit: 'pH',
+    min: 0,
+    max: 14,
+    optimalRange: { min: 6.5, max: 8.0 },
+    description: 'Tingkat keasaman netral yang ideal',
+    icon: <Gauge size={24} />,
+    defaultValue: 7.2
+  },
+  gas: {
+    title: 'Gas Amonia',
+    unit: 'ppm',
+    min: 0,
+    max: 500,
+    optimalRange: { min: 0, max: 200 },
+    description: 'Level gas amonia dalam batas normal',
+    icon: <Wind size={24} />,
+    defaultValue: 125
+  },
+  ec: {
+    title: 'Konduktivitas',
+    unit: 'mS/cm',
+    min: 0,
+    max: 5,
+    optimalRange: { min: 1, max: 2 },
+    description: 'Konduktivitas listrik agak tinggi',
+    icon: <Zap size={24} />,
+    defaultValue: 2.1
+  },
+  maturity: {
+    title: 'Kematangan',
+    unit: '%',
+    min: 0,
+    max: 100,
+    optimalRange: { min: 80, max: 100 },
+    description: 'Kompos sedang dalam proses pematangan',
+    icon: <Leaf size={24} />,
+    defaultValue: 75
+  }
 };
 
 const Dashboard = () => {
-  const [sensorData, setSensorData] = useState({
-    temperature: {
-      value: null,
-      unit: '°C',
-      status: 'loading',
-      min: 0,
-      max: 80,
-      optimalRange: { min: 40, max: 65 },
-      description: 'Suhu optimal untuk aktivitas mikroba thermophilic'
-    },
-    moisture: {
-      value: null,
-      unit: '%',
-      status: 'loading',
-      min: 0,
-      max: 100,
-      optimalRange: { min: 40, max: 60 },
-      description: 'Kelembaban ideal untuk proses pengomposan'
-    },
-    ph: {
-      value: null,
-      unit: 'pH',
-      status: 'loading',
-      min: 0,
-      max: 14,
-      optimalRange: { min: 6.5, max: 8.0 },
-      description: 'Tingkat keasaman netral yang ideal'
-    },
-    gas: {
-      value: null,
-      unit: 'ppm',
-      status: 'loading',
-      min: 0,
-      max: 500,
-      optimalRange: { min: 0, max: 200 },
-      description: 'Level gas amonia dalam batas normal'
-    },
-    ec: {
-      value: null,
-      unit: 'mS/cm',
-      status: 'loading',
-      min: 0,
-      max: 5,
-      optimalRange: { min: 1, max: 2 },
-      description: 'Konduktivitas listrik agak tinggi'
-    },
-    maturity: {
-      value: null,
-      unit: '%',
-      status: 'loading',
-      min: 0,
-      max: 100,
-      optimalRange: { min: 80, max: 100 },
-      description: 'Kompos sedang dalam proses pematangan'
-    }
-  });
-
-  const [lastUpdate, setLastUpdate] = useState(new Date());
-  const [firebaseInitialized, setFirebaseInitialized] = useState(false);
-
-  // Fungsi untuk menentukan status berdasarkan nilai
   const getStatus = (value, optimalMin, optimalMax) => {
     if (value === null || value === undefined) return 'loading';
     if (value >= optimalMin && value <= optimalMax) return 'optimal';
@@ -85,88 +85,199 @@ const Dashboard = () => {
     return 'attention';
   };
 
-  // Inisialisasi Firebase
-  useEffect(() => {
-    initializeFirebase().then(() => {
-      setFirebaseInitialized(true);
-      console.log('Firebase siap digunakan');
-    }).catch(error => {
-      console.error('Gagal inisialisasi Firebase:', error);
+  const [sensorData, setSensorData] = useState(() => {
+    const initial = {};
+    Object.entries(SENSOR_CONFIG).forEach(([key, config]) => {
+      initial[key] = {
+        value: config.defaultValue,
+        status: getStatus(config.defaultValue, config.optimalRange.min, config.optimalRange.max)
+      };
     });
-  }, []);
+    return initial;
+  });
 
-  // Read data dari Firebase Realtime Database
+  const [temperatureHistory, setTemperatureHistory] = useState([]);
+  const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [firebaseInitialized, setFirebaseInitialized] = useState(false);
+  const [currentFirebaseTemp, setCurrentFirebaseTemp] = useState(55.2);
+
+  // Ref to keep track of latest temp for interval
+  const tempRef = useRef(55.2);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [startTime, setStartTime] = useState(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+
+  const recordingIntervalRef = useRef(null);
+  const dataCollectionIntervalRef = useRef(null);
+
+  // Update tempRef when currentFirebaseTemp changes
   useEffect(() => {
-    if (!firebaseInitialized || !database) {
+    tempRef.current = currentFirebaseTemp;
+  }, [currentFirebaseTemp]);
+
+  useEffect(() => {
+    if (!database) {
       console.log('Menunggu inisialisasi Firebase...');
       return;
     }
 
-    console.log('Mencoba connect ke Firebase...');
-    
-    const { ref, onValue } = require('firebase/database');
-    const sensorRef = ref(database, 'sensors');
-    
-    const unsubscribe = onValue(sensorRef, (snapshot) => {
-      const data = snapshot.val();
-      console.log('Data dari Firebase:', data);
-      
-      if (data) {
-        setSensorData(prevData => ({
-          temperature: {
-            ...prevData.temperature,
-            value: data.temperature !== undefined ? data.temperature : null,
-            status: getStatus(data.temperature, 40, 65)
-          },
-          moisture: {
-            ...prevData.moisture,
-            value: data.moisture !== undefined ? data.moisture : null,
-            status: getStatus(data.moisture, 40, 60)
-          },
-          ph: {
-            ...prevData.ph,
-            value: data.ph !== undefined ? data.ph : null,
-            status: getStatus(data.ph, 6.5, 8.0)
-          },
-          gas: {
-            ...prevData.gas,
-            value: data.gas !== undefined ? data.gas : null,
-            status: getStatus(data.gas, 0, 200)
-          },
-          ec: {
-            ...prevData.ec,
-            value: data.ec !== undefined ? data.ec : null,
-            status: getStatus(data.ec, 1, 2)
-          },
-          maturity: {
-            ...prevData.maturity,
-            value: data.maturity !== undefined ? data.maturity : null,
-            status: getStatus(data.maturity, 80, 100)
+    try {
+      console.log('Mencoba connect ke Firebase untuk data real...');
+      const sensorRef = ref(database, 'sensors');
+
+      const unsubscribe = onValue(sensorRef, (snapshot) => {
+        try {
+          const data = snapshot.val();
+          console.log('Data REAL dari Firebase:', data);
+
+          if (data) {
+            const firebaseTemperature = data.temperature !== undefined ? data.temperature : 55.2;
+            setCurrentFirebaseTemp(firebaseTemperature);
+
+            setSensorData(prevData => {
+              const newData = { ...prevData };
+              Object.keys(SENSOR_CONFIG).forEach(key => {
+                const value = data[key] !== undefined ? data[key] : prevData[key].value;
+                const config = SENSOR_CONFIG[key];
+                newData[key] = {
+                  value,
+                  status: getStatus(value, config.optimalRange.min, config.optimalRange.max)
+                };
+              });
+              return newData;
+            });
+
+            setLastUpdate(new Date());
+            setFirebaseInitialized(true);
           }
-        }));
-        
-        setLastUpdate(new Date());
-      } else {
-        console.log('Tidak ada data di Firebase');
-        // Set default data untuk testing
-        setSensorData(prevData => ({
-          temperature: { ...prevData.temperature, value: 55.2, status: 'optimal' },
-          moisture: { ...prevData.moisture, value: 52, status: 'optimal' },
-          ph: { ...prevData.ph, value: 7.2, status: 'optimal' },
-          gas: { ...prevData.gas, value: 125, status: 'optimal' },
-          ec: { ...prevData.ec, value: 2.1, status: 'warning' },
-          maturity: { ...prevData.maturity, value: 75, status: 'attention' }
-        }));
-      }
-    }, (error) => {
-      console.error('Error reading from Firebase:', error);
+        } catch (error) {
+          console.error('Error processing Firebase data:', error);
+        }
+      }, (error) => {
+        console.error('Error reading from Firebase:', error);
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
+    } catch (error) {
+      console.error('Error in Firebase setup:', error);
+    }
+  }, []);
+
+  const addNewDataPoint = () => {
+    const currentTemp = tempRef.current;
+    if (currentTemp === null) {
+      console.log('❌ Tidak bisa tambah data: Data Firebase null');
+      return;
+    }
+
+    const now = new Date();
+    const newDataPoint = {
+      x: now.getTime(),
+      y: currentTemp
+    };
+
+    setTemperatureHistory(prev => {
+      const newHistory = [...prev, newDataPoint];
+      console.log(`📊 Data point ke-${newHistory.length} ditambahkan:`, {
+        time: now.toLocaleTimeString('id-ID'),
+        temperature: currentTemp
+      });
+      return newHistory;
     });
 
-    // Cleanup subscription
+    setLastUpdate(now);
+  };
+
+  // Effect untuk mencatat data saat ada PERUBAHAN suhu (Real-time)
+  const prevTempRef = useRef(currentFirebaseTemp);
+  useEffect(() => {
+    if (isRecording) {
+      if (currentFirebaseTemp !== prevTempRef.current) {
+        console.log('🌡️ Suhu berubah, mencatat data point baru...');
+        addNewDataPoint();
+        prevTempRef.current = currentFirebaseTemp;
+      }
+    } else {
+      prevTempRef.current = currentFirebaseTemp;
+    }
+  }, [currentFirebaseTemp, isRecording]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+
+    console.log('🔄 Memulai auto data collection setiap 1 menit...');
+
+    dataCollectionIntervalRef.current = setInterval(() => {
+      addNewDataPoint();
+    }, 60000); // 1 menit = 60000 ms
+
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (dataCollectionIntervalRef.current) {
+        clearInterval(dataCollectionIntervalRef.current);
+        dataCollectionIntervalRef.current = null;
+      }
     };
-  }, [firebaseInitialized]);
+  }, [isRecording]);
+
+  const startRecording = () => {
+    if (currentFirebaseTemp === null) {
+      alert('Tunggu hingga data Firebase tersedia!');
+      return;
+    }
+
+    const now = new Date();
+    setStartTime(now);
+    setIsRecording(true);
+    setRecordingDuration(0);
+
+    const initialDataPoint = {
+      x: now.getTime(),
+      y: currentFirebaseTemp
+    };
+
+    setTemperatureHistory([initialDataPoint]);
+    setLastUpdate(now);
+
+    console.log(`� Recording dimulai pada: ${now.toLocaleTimeString('id-ID')}`);
+
+    recordingIntervalRef.current = setInterval(() => {
+      setRecordingDuration(Math.floor((Date.now() - now.getTime()) / 1000));
+    }, 1000);
+  };
+
+  const stopRecording = () => {
+    setIsRecording(false);
+
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+
+    if (dataCollectionIntervalRef.current) {
+      clearInterval(dataCollectionIntervalRef.current);
+      dataCollectionIntervalRef.current = null;
+    }
+
+    console.log(`🔴 Recording dihentikan. Total durasi: ${formatDuration(recordingDuration)}`);
+    console.log('Total data points:', temperatureHistory.length);
+  };
+
+  const formatDuration = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const resetChart = () => {
+    setTemperatureHistory([]);
+    setStartTime(null);
+    setRecordingDuration(0);
+    console.log('🔄 Grafik direset');
+  };
 
   return (
     <div>
@@ -174,95 +285,116 @@ const Dashboard = () => {
         <h1>🌱 Kompos Monitoring System</h1>
         <p>Monitor kondisi kompos Anda secara real-time</p>
         {!firebaseInitialized && (
-          <div style={{ color: 'yellow', marginTop: '10px' }}>
-            Menghubungkan ke database...
+          <div className="connection-status loading">
+            🔄 Menghubungkan ke database Firebase...
+          </div>
+        )}
+        {firebaseInitialized && currentFirebaseTemp && (
+          <div className="connection-status connected">
+            ✅ Terhubung ke Firebase • Suhu: {currentFirebaseTemp}°C
+          </div>
+        )}
+      </div>
+
+      <div className="chart-section">
+        <div className="chart-header">
+          <div className="section-title">
+            <Thermometer size={28} />
+            <h2>Grafik Monitoring Suhu</h2>
+          </div>
+
+          <div className="chart-controls">
+            {!isRecording ? (
+              <button
+                className="control-btn start-btn"
+                onClick={startRecording}
+                disabled={currentFirebaseTemp === null}
+              >
+                <Play size={16} />
+                Start Recording
+              </button>
+            ) : (
+              <button
+                className="control-btn stop-btn"
+                onClick={stopRecording}
+              >
+                <Square size={16} />
+                Stop Recording
+              </button>
+            )}
+
+            <button
+              className="control-btn reset-btn"
+              onClick={resetChart}
+              disabled={isRecording}
+            >
+              Reset Grafik
+            </button>
+
+            {isRecording && startTime && (
+              <div className="recording-info">
+                <div className="recording-indicator">
+                  <div className="pulse"></div>
+                  REC
+                </div>
+                <span>Dimulai: {startTime.toLocaleTimeString('id-ID')}</span>
+                <span>Durasi: {formatDuration(recordingDuration)}</span>
+                <span>Data Points: {temperatureHistory.length}</span>
+                <span>Interval: 1 menit</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <TemperatureChart
+          temperatureData={temperatureHistory}
+          isRecording={isRecording}
+          startTime={startTime}
+        />
+
+        {temperatureHistory.length === 0 && !isRecording && (
+          <div className="chart-placeholder-instruction">
+            <p>🎯 Klik "Start Recording" untuk memulai monitoring grafik suhu</p>
+            <p>📊 Data akan diambil setiap menit secara otomatis</p>
+          </div>
+        )}
+
+        {isRecording && temperatureHistory.length > 0 && (
+          <div className="recording-progress">
+            <p>⏰ Data point berikutnya: {new Date(lastUpdate.getTime() + 60000).toLocaleTimeString('id-ID')}</p>
+            <p>📈 Grafik akan melebar secara otomatis</p>
           </div>
         )}
       </div>
 
       <div className="dashboard">
-        <SensorCard
-          title="Suhu"
-          value={sensorData.temperature.value}
-          unit={sensorData.temperature.unit}
-          status={sensorData.temperature.status}
-          min={sensorData.temperature.min}
-          max={sensorData.temperature.max}
-          optimalRange={sensorData.temperature.optimalRange}
-          description={sensorData.temperature.description}
-          icon={<Thermometer size={24} />}
-          type="temperature"
-        />
-
-        <SensorCard
-          title="Kelembaban"
-          value={sensorData.moisture.value}
-          unit={sensorData.moisture.unit}
-          status={sensorData.moisture.status}
-          min={sensorData.moisture.min}
-          max={sensorData.moisture.max}
-          optimalRange={sensorData.moisture.optimalRange}
-          description={sensorData.moisture.description}
-          icon={<Droplets size={24} />}
-          type="moisture"
-        />
-
-        <SensorCard
-          title="pH Level"
-          value={sensorData.ph.value}
-          unit={sensorData.ph.unit}
-          status={sensorData.ph.status}
-          min={sensorData.ph.min}
-          max={sensorData.ph.max}
-          optimalRange={sensorData.ph.optimalRange}
-          description={sensorData.ph.description}
-          icon={<Gauge size={24} />}
-          type="ph"
-        />
-
-        <SensorCard
-          title="Gas Amonia"
-          value={sensorData.gas.value}
-          unit={sensorData.gas.unit}
-          status={sensorData.gas.status}
-          min={sensorData.gas.min}
-          max={sensorData.gas.max}
-          optimalRange={sensorData.gas.optimalRange}
-          description={sensorData.gas.description}
-          icon={<Wind size={24} />}
-          type="gas"
-        />
-
-        <SensorCard
-          title="Konduktivitas"
-          value={sensorData.ec.value}
-          unit={sensorData.ec.unit}
-          status={sensorData.ec.status}
-          min={sensorData.ec.min}
-          max={sensorData.ec.max}
-          optimalRange={sensorData.ec.optimalRange}
-          description={sensorData.ec.description}
-          icon={<Zap size={24} />}
-          type="ec"
-        />
-
-        <SensorCard
-          title="Kematangan"
-          value={sensorData.maturity.value}
-          unit={sensorData.maturity.unit}
-          status={sensorData.maturity.status}
-          min={sensorData.maturity.min}
-          max={sensorData.maturity.max}
-          optimalRange={sensorData.maturity.optimalRange}
-          description={sensorData.maturity.description}
-          icon={<Leaf size={24} />}
-          type="maturity"
-        />
+        {Object.entries(SENSOR_CONFIG).map(([key, config]) => (
+          <SensorCard
+            key={key}
+            title={config.title}
+            value={sensorData[key].value}
+            unit={config.unit}
+            status={sensorData[key].status}
+            min={config.min}
+            max={config.max}
+            optimalRange={config.optimalRange}
+            description={config.description}
+            icon={config.icon}
+            type={key}
+          />
+        ))}
       </div>
 
       <div className="last-update">
         Terakhir diperbarui: {lastUpdate.toLocaleTimeString('id-ID')}
-        {!firebaseInitialized && ' (Offline Mode)'}
+        {firebaseInitialized ? (
+          <span> • 🔗 Terhubung ke Firebase</span>
+        ) : (
+          <span> • ⚠️ Mode offline</span>
+        )}
+        {isRecording && (
+          <span> • 🔴 Recording aktif ({temperatureHistory.length} data points)</span>
+        )}
       </div>
     </div>
   );
