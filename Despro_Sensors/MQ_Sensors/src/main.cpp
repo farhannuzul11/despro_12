@@ -8,6 +8,10 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
+
+/*In MQ135 library, make sure to set the 
+ATMOCO2 value according to the latest global 
+CO2 level and change the rzero=5804.99, rload=22.0*/
 #include <MQ135.h>
 
 #include "secrets.h" // Make the secrets file
@@ -21,13 +25,15 @@
 #define USER_PASSWORD PASSWORD_USER
 
 // Pins definition for MQ-4 and MQ-135 sensors
-#define MQ4_PIN1   2  // ADC2_0
-#define MQ4_PIN2   4  // ADC2_2
-#define MQ4_PIN3   15 // ADC2_3
+// Use ADC1 pins only — ADC2 is unavailable while Wi‑Fi is active on ESP32
+// Recommended ADC1 GPIOs: 32, 33, 34, 35, 36, 39 (input-only for 34..39)
+#define MQ4_PIN1   32 // ADC1_CH4
+#define MQ4_PIN2   33 // ADC1_CH5
+#define MQ4_PIN3   34 // ADC1_CH6 (input-only)
 
-#define MQ135_PIN1 12 // ADC1_CH7
-#define MQ135_PIN2 13 // ADC1_CH0
-#define MQ135_PIN3 14 // ADC1_CH3
+#define MQ135_PIN1 35 // ADC1_CH7 (input-only)
+#define MQ135_PIN2 36 // ADC1_CH0 (input-only) or VP pin
+#define MQ135_PIN3 39 // ADC1_CH3 (input-only) or VN pin
 
 // Firebase components
 FirebaseApp app;
@@ -105,6 +111,8 @@ void setup(){
     while(1);
   }
 
+  // Use simple INPUT for ADC pins. Pins 34..39 are input-only and don't
+  // support internal pull-ups/pull-downs on many ESP32 modules.
   pinMode(MQ4_PIN1, INPUT_PULLDOWN);
   pinMode(MQ4_PIN2, INPUT_PULLDOWN);
   pinMode(MQ4_PIN3, INPUT_PULLDOWN);
@@ -143,10 +151,10 @@ void setup(){
   xTaskCreatePinnedToCore(readMQ135Sensor, "Task MQ-135 (3)", 4096, &p_mq135_3, 1, &mq135_3_TaskHandle, 1);
 
   // Create Firebase loop task (maintains connection)
-  xTaskCreatePinnedToCore(firebaseLoopTask, "Firebase Loop", 4096, NULL, 2, &firebaseLoopTaskHandle, 0);
+  xTaskCreatePinnedToCore(firebaseLoopTask, "Firebase Loop", 12000, NULL, 2, &firebaseLoopTaskHandle, 0);
   
   // Create Firebase send task (sends data every 8 seconds)
-  xTaskCreatePinnedToCore(firebaseSendTask, "Firebase Send", 8192, NULL, 1, &firebaseSendTaskHandle, 0);
+  xTaskCreatePinnedToCore(firebaseSendTask, "Firebase Send", 12000, NULL, 1, &firebaseSendTaskHandle, 0);
 }
 
 void loop(){
@@ -247,15 +255,15 @@ void firebaseSendTask(void *pvParameters) {
         String mq4_3_Path = databasePath + "/mq4_sensor3/value";
         Database.set<int>(aClient, mq4_3_Path, mq4_3, processData, "MQ4_3_Value");
         
-        // MQ-135 Sensor 1 data (PPM only)
+        // MQ-135 Sensor 1 data
         String mq135_1_ppm_Path = databasePath + "/mq135_sensor1/ppm";
         Database.set<float>(aClient, mq135_1_ppm_Path, mq135_p1, processData, "MQ135_1_PPM");
         
-        // MQ-135 Sensor 2 data (PPM only)
+        // MQ-135 Sensor 2 data
         String mq135_2_ppm_Path = databasePath + "/mq135_sensor2/ppm";
         Database.set<float>(aClient, mq135_2_ppm_Path, mq135_p2, processData, "MQ135_2_PPM");
         
-        // MQ-135 Sensor 3 data (PPM only)
+        // MQ-135 Sensor 3 data
         String mq135_3_ppm_Path = databasePath + "/mq135_sensor3/ppm";
         Database.set<float>(aClient, mq135_3_ppm_Path, mq135_p3, processData, "MQ135_3_PPM");
         

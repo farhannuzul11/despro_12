@@ -115,10 +115,10 @@ void setup(){
   xTaskCreatePinnedToCore(readDHT, "DHT 3 Task", 4096, &params3, 1, &dht3_TaskHandle, 1);
   
   //Create Firebase loop task (maintains connection)
-  xTaskCreatePinnedToCore(firebaseLoopTask, "Firebase Loop", 4096, NULL, 2, &firebaseLoopTaskHandle, 0);
+  xTaskCreatePinnedToCore(firebaseLoopTask, "Firebase Loop", 12000, NULL, 2, &firebaseLoopTaskHandle, 0);
   
   //Create Firebase send task (sends data every 8 seconds)
-  xTaskCreatePinnedToCore(firebaseSendTask, "Firebase Send", 4096, NULL, 1, &firebaseSendTaskHandle, 0);
+  xTaskCreatePinnedToCore(firebaseSendTask, "Firebase Send", 12000, NULL, 1, &firebaseSendTaskHandle, 0);
 }
 
 void loop(){}
