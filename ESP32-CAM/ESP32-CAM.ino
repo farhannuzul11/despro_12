@@ -22,7 +22,7 @@
 
 // Photo File Configuration
 #define FILE_PHOTO_PATH "/photo.jpg"
-#define STORAGE_PATH "/images/" 
+#define STORAGE_PATH "/images/session_001/"
 
 // LED Flash Pin
 #define LED_PIN 4
@@ -43,10 +43,9 @@ String uploadFileName = "";
 
 // Timer Variables
 unsigned long lastCaptureTime = 0;
-// Change interval as needed (example: 30 seconds)
 const unsigned long captureInterval = 30000; 
 
-// User functions declarations
+// Functions declarations
 void processData(AsyncResult &aResult);
 void file_operation_callback(File &file, const char *filename, file_operating_mode mode);
 bool capturePhotoSaveLittleFS();
