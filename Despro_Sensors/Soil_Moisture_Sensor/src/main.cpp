@@ -8,6 +8,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
+#include <time.h>
 
 #include "secrets.h" // Make the secrets file
 
@@ -54,9 +55,10 @@ TaskHandle_t firebaseSendTaskHandle;
 SemaphoreHandle_t sensorDataMutex;
 
 // Variables
-int soil_moist1 = 0, soil_moist2 = 0, soil_moist3 = 0;
+int soil_moist1, soil_moist2, soil_moist3;
 String uid;
 String databasePath;
+int sendFirebase = 15000;
 
 // Functions Declaration
 void readSoilHumid(void *pvParameters);
@@ -94,6 +96,15 @@ void setup(){
   Serial.println("\nWiFi connected!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+
+  // Setup Time (NTP)
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Waiting for NTP time");
+  while (time(nullptr) < 100000) {
+    Serial.print(".");
+    delay(100);
+  }
+  Serial.println("\nTime synchronized");
 
   ssl_client.setInsecure();
   ssl_client.setHandshakeTimeout(5);
@@ -156,49 +167,47 @@ void firebaseSendTask(void *pvParameters) {
   Serial.println("Firebase Send Task started");
   
   while(1) {
-    // Wait for Firebase to be ready
     if (app.ready()) {
       
-      // Get User UID (only once or when changed)
-      if (uid.isEmpty()) {
-        uid = app.getUid().c_str();
-        Serial.printf("User UID: %s\n", uid.c_str());
-        databasePath = "UsersData/" + uid;
+      int avgMoisture = 0;
+      bool validData = false;
+      
+      if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
+        avgMoisture = (soil_moist1 + soil_moist2 + soil_moist3) / 3;
+        
+        if (avgMoisture >= 0) {
+            validData = true;
+        }
+        xSemaphoreGive(sensorDataMutex); 
       }
       
-      // Lock mutex to read all sensor data safely
-      if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-        // Copy sensor data to local variables
-        int m1 = soil_moist1;
-        int m2 = soil_moist2;
-        int m3 = soil_moist3;
-        xSemaphoreGive(sensorDataMutex); // Release mutex immediately
-        
-        // Send data to Firebase
-        Serial.println("Sending data to Firebase...");
-        
-        // Soil Sensor 1 data
-        String soil1Path = databasePath + "/soil_sensor1/moisture";
-        Database.set<int>(aClient, soil1Path, m1, processData, "Soil1_Data");
+      if (validData) {
+        Serial.println("Sending Soil Data...");
 
-        // Soil Sensor 2 data
-        String soil2Path = databasePath + "/soil_sensor2/moisture";
-        Database.set<int>(aClient, soil2Path, m2, processData, "Soil2_Data");
+        unsigned long timestamp = getEpochTime();
+        String timestampStr = String(timestamp);
+        
+        String latestPath = "/latest/session_001";
+        String logPath = "/sensor_logs/session_001/" + timestampStr;
+        
+        // Latest Data paths
+        Database.set<int>(aClient, latestPath + "/moisture", avgMoisture, processData, "Latest_Soil");
+        Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Latest_Time");
 
-        // Soil Sensor 3 data
-        String soil3Path = databasePath + "/soil_sensor3/moisture";
-        Database.set<int>(aClient, soil3Path, m3, processData, "Soil3_Data");
+        // Log Data paths
+        Database.set<int>(aClient, logPath + "/moisture", avgMoisture, processData, "Log_Soil");
+        Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Log_Time");
         
         Serial.println("Data sent successfully!");
+        Serial.println("Sent: Soil Moisture = " + String(avgMoisture) + "%");
       }
     } else {
       Serial.println("Waiting for Firebase authentication...");
     }
     
-    vTaskDelay(pdMS_TO_TICKS(8000)); // Send every 8 seconds
+    vTaskDelay(pdMS_TO_TICKS(sendFirebase)); 
   }
 }
-
 // Callback function for Firebase operations
 void processData(AsyncResult &aResult) {
   if (!aResult.isResult())
@@ -215,4 +224,10 @@ void processData(AsyncResult &aResult) {
                     aResult.uid().c_str(), 
                     aResult.error().message().c_str(), 
                     aResult.error().code());
+}
+
+unsigned long getEpochTime() {
+  time_t now;
+  time(&now);
+  return now;
 }

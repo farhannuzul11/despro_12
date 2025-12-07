@@ -9,6 +9,7 @@
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
 #include <MQ135.h>
+#include <time.h>
 
 #include "secrets.h" 
 
@@ -20,7 +21,7 @@
 #define USER_EMAIL EMAIL_USER
 #define USER_PASSWORD PASSWORD_USER
 
-// Pin Definitions (ADC1 Only)
+// Pin Definitions
 #define MQ4_PIN1   32 
 #define MQ4_PIN2   33 
 #define MQ4_PIN3   34 
@@ -36,18 +37,6 @@ using AsyncClient = AsyncClientClass;
 AsyncClient aClient(ssl_client);
 RealtimeDatabase Database;
 
-// Authentication
-UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD);
-
-// Task Handles
-TaskHandle_t mq4_1_TaskHandle, mq4_2_TaskHandle, mq4_3_TaskHandle;
-TaskHandle_t mq135_1_TaskHandle, mq135_2_TaskHandle, mq135_3_TaskHandle;
-TaskHandle_t firebaseLoopTaskHandle;
-TaskHandle_t firebaseSendTaskHandle;
-
-// Mutex
-SemaphoreHandle_t sensorDataMutex;
-
 // Structs
 struct MQ4SensorParams{
   int pin;
@@ -62,6 +51,18 @@ struct MQ135SensorParams{
   const char* sensorName;
 };
 
+// Authentication
+UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD);
+
+// Task Handles
+TaskHandle_t mq4_1_TaskHandle, mq4_2_TaskHandle, mq4_3_TaskHandle;
+TaskHandle_t mq135_1_TaskHandle, mq135_2_TaskHandle, mq135_3_TaskHandle;
+TaskHandle_t firebaseLoopTaskHandle;
+TaskHandle_t firebaseSendTaskHandle;
+
+// Mutex
+SemaphoreHandle_t sensorDataMutex;
+
 // Variables
 // MQ-4 Variables
 int mq4_val1, mq4_val2, mq4_val3; 
@@ -72,6 +73,7 @@ float mq135_val1, mq135_val2, mq135_val3;
 
 String uid;
 String databasePath;
+int sendFirebase = 15000; // 15 seconds
 
 // MQ-4 Parameters
 MQ4SensorParams mq4_1 = {MQ4_PIN1, &mq4_val1, "MQ-4 (1)"};
@@ -89,6 +91,7 @@ void readMQ135Sensor(void *pvParameters);
 void firebaseLoopTask(void *pvParameters);
 void firebaseSendTask(void *pvParameters);
 void processData(AsyncResult &aResult);
+unsigned long getEpochTime();
 
 void setup(){
   Serial.begin(115200);
@@ -106,15 +109,25 @@ void setup(){
   pinMode(MQ135_PIN1, INPUT_PULLDOWN);
   pinMode(MQ135_PIN2, INPUT_PULLDOWN);
   pinMode(MQ135_PIN3, INPUT_PULLDOWN);
-
+  
+  // Connect to Wi-Fi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println("Connecting to Wi-Fi");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     delay(500);
   }
-  Serial.println("\nWiFi connected!");
+  Serial.println("WiFi connected! ");
   Serial.println(WiFi.localIP());
+
+  // Timestamp 
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.println("\nWaiting for NTP time");
+  while (time(nullptr) < 100000) {
+    Serial.print(".");
+    delay(100);
+  }
+  Serial.println("Time synchronized");
 
   ssl_client.setInsecure();
   ssl_client.setHandshakeTimeout(5);
@@ -147,7 +160,8 @@ void readMQ4Sensor(void *pvParameters){
   while (1){
     int raw = analogRead(params->pin);
     
-    int percentage = map(raw, 200, 10000, 0, 100);
+    // Convert raw value to percentage (0-100%)
+    int percentage = map(raw, 200, 4095, 0, 100);
     percentage = constrain(percentage, 0, 100);
 
     if(xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
@@ -169,14 +183,13 @@ void readMQ135Sensor(void *pvParameters){
     float rzero = sensor.getRZero();
     float ppm = sensor.getPPM();
 
-    // --- KONVERSI KE PERSENTASE (Linear 0-100%) ---
-    // Asumsi max PPM 10000 = 100%
+    // Convert PPM to percentage (0-100%) based on typical CO2 levels
     int percentage = map((long)ppm, 400, 2000, 0, 100); 
     percentage = constrain(percentage, 0, 100);
 
     if(xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
       *(params->rzeroOut) = rzero;
-      *(params->valueOut= (float)percentage;
+      *(params->valueOut) = (float)percentage;
       xSemaphoreGive(sensorDataMutex); 
     }
 
@@ -199,45 +212,50 @@ void firebaseSendTask(void *pvParameters) {
   while(1) {
     if (app.ready()) {
       
-      if (uid.isEmpty()) {
-        uid = app.getUid().c_str();
-        Serial.printf("User UID: %s\n", uid.c_str());
-        databasePath = "UsersData/" + uid;
-      }
-      
-      int m4_1, m4_2, m4_3;
-      float m135_p1, m135_p2, m135_p3;
+      float avgMQ4 = 0.0;
+      float avgMQ135 = 0.0;
+      bool validData = false;
 
       if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-        m4_1 = mq4_val1;
-        m4_2 = mq4_val2;
-        m4_3 = mq4_val3;
+        // Average MQ-4 (Methane)
+        avgMQ4 = (mq4_val1 + mq4_val2 + mq4_val3) / 3.0;
         
-        m135_p1 = mq135_val1;
-        m135_p2 = mq135_val2;
-        m135_p3 = mq135_val3;
+        // Average MQ-135 (CO2/Air Quality)
+        avgMQ135 = (mq135_val1 + mq135_val2 + mq135_val3) / 3.0;
         
+        if (avgMQ4 >= 0 && avgMQ135 >= 0) {
+            validData = true;
+        }
         xSemaphoreGive(sensorDataMutex); 
+      }
+      
+      if (validData) {
+        Serial.println("Sending data to Firebase...");
         
-        Serial.println("Sending PERCENTAGE data to ORIGINAL PATHS...");
+        unsigned long timestamp = getEpochTime();
+        String timestampStr = String(timestamp);
+
+        String latestPath = "/latest/session_001";
+        String logPath = "/sensor_logs/session_001/" + timestampStr;
         
-        // MQ-4 Sensor data
-        Database.set<int>(aClient, databasePath + "/mq4_sensor1/value", m4_1, processData, "MQ4_1_Val");
-        Database.set<int>(aClient, databasePath + "/mq4_sensor2/value", m4_2, processData, "MQ4_2_Val");
-        Database.set<int>(aClient, databasePath + "/mq4_sensor3/value", m4_3, processData, "MQ4_3_Val");
-        
-        // MQ-135 Sensor data 
-        Database.set<float>(aClient, databasePath + "/mq135_sensor1/ppm", m135_p1, processData, "MQ135_1_PPM");
-        Database.set<float>(aClient, databasePath + "/mq135_sensor2/ppm", m135_p2, processData, "MQ135_2_PPM");
-        Database.set<float>(aClient, databasePath + "/mq135_sensor3/ppm", m135_p3, processData, "MQ135_3_PPM");
+        // Latest Data
+        Database.set<float>(aClient, latestPath + "/methane", avgMQ4, processData, "Latest_Methane");
+        Database.set<float>(aClient, latestPath + "/co2", avgMQ135, processData, "Latest_CO2");
+        Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Latest_Time");
+
+        // Log Data
+        Database.set<float>(aClient, logPath + "/methane", avgMQ4, processData, "Log_Methane");
+        Database.set<float>(aClient, logPath + "/co2", avgMQ135, processData, "Log_CO2");
+        Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Log_Time");
         
         Serial.println("Data sent successfully!");
+        Serial.printf("Sent: Methane=%.2f, CO2=%.2f, Time=%lu\n", avgMQ4, avgMQ135, timestamp);
       }
     } else {
       Serial.println("Waiting for Firebase authentication...");
     }
     
-    vTaskDelay(pdMS_TO_TICKS(8000)); 
+    vTaskDelay(pdMS_TO_TICKS(sendFirebase)); 
   }
 }
 
@@ -249,4 +267,10 @@ void processData(AsyncResult &aResult) {
   if (aResult.isError()) {
     Firebase.printf("Error: %s\n", aResult.error().message().c_str());
   }
+}
+
+unsigned long getEpochTime() {
+  time_t now;
+  time(&now);
+  return now;
 }

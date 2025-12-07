@@ -9,6 +9,7 @@
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
 #include <DHT.h>
+#include <time.h>
 
 #include "secrets.h" // Make the secrets file
 
@@ -50,9 +51,7 @@ struct DhtParams {
 UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD);
 
 //Task handles
-TaskHandle_t dht1_TaskHandle;
-TaskHandle_t dht2_TaskHandle;
-TaskHandle_t dht3_TaskHandle;
+TaskHandle_t dht1_TaskHandle, dht2_TaskHandle, dht3_TaskHandle;
 TaskHandle_t firebaseLoopTaskHandle;
 TaskHandle_t firebaseSendTaskHandle;
 
@@ -64,17 +63,18 @@ float humidity1, humidity2, humidity3;
 float temperature1, temperature2, temperature3;
 String uid;
 String databasePath;
+int sendFirebase = 15000;
+
+//Parameters for each DHT sensor task
+DhtParams params1 = {&dht1, &humidity1, &temperature1, "DHT 1"};
+DhtParams params2 = {&dht2, &humidity2, &temperature2, "DHT 2"};
+DhtParams params3 = {&dht3, &humidity3, &temperature3, "DHT 3"};
 
 //Functions Declaration
 void readDHT(void *pvParameters);
 void firebaseLoopTask(void *pvParameters);
 void firebaseSendTask(void *pvParameters);
 void processData(AsyncResult &aResult);
-
-//Parameters for each DHT sensor task
-DhtParams params1 = {&dht1, &humidity1, &temperature1, "DHT 1"};
-DhtParams params2 = {&dht2, &humidity2, &temperature2, "DHT 2"};
-DhtParams params3 = {&dht3, &humidity3, &temperature3, "DHT 3"};
 
 void setup(){
   Serial.begin(115200);
@@ -91,15 +91,23 @@ void setup(){
   dht3.begin();
 
   // Connect to Wi-Fi
-  WiFi.begin("JURASIK", "adeadeaje");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println("Connecting to Wi-Fi");
   while (WiFi.status() != WL_CONNECTED)    {
     Serial.print(".");
     delay(500);
   }
-  Serial.println("\nWiFi connected!");
-  Serial.print("IP address: ");
+  Serial.println("\nWiFi connected! ");
   Serial.println(WiFi.localIP());
+
+  // Timestamp
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Waiting for NTP time");
+  while (time(nullptr) < 100000) {
+    Serial.print(".");
+    delay(100);
+  }
+  Serial.println("\nTime synchronized");
 
   ssl_client.setInsecure();
   ssl_client.setHandshakeTimeout(5);
@@ -158,60 +166,57 @@ void firebaseLoopTask(void *pvParameters) {
   }
 }
 
-// Sends all sensor data to Firebase every 8 seconds
+// Sends all sensor data to Firebase every 15 seconds
 void firebaseSendTask(void *pvParameters) {
   Serial.println("Firebase Send Task started");
   
   while(1) {
     //Wait for Firebase to be ready
     if (app.ready()) {
-      
-      //Get User UID (only once or when changed)
-      if (uid.isEmpty()) {
-        uid = app.getUid().c_str();
-        Firebase.printf("User UID: %s\n", uid.c_str());
-        databasePath = "UsersData/" + uid;
-      }
-      
+      float avgTemp = 0.0;
+      float avgHum = 0.0;
+      bool validData = false;
+
       //Lock mutex to read all sensor data safely
       if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-        //Copy sensor data to local variables
-        float temp1 = temperature1;
-        float hum1 = humidity1;
-        float temp2 = temperature2;
-        float hum2 = humidity2;
-        float temp3 = temperature3;
-        float hum3 = humidity3;
-        xSemaphoreGive(sensorDataMutex); //Release mutex immediately
+        avgTemp = (temperature1 + temperature2 + temperature3) / 3.0;
+        avgHum = (humidity1 + humidity2 + humidity3) / 3.0;
+
+        if (!isnan(avgTemp) && !isnan(avgHum) && avgTemp > 0) {
+            validData = true;
+        }
+        xSemaphoreGive(sensorDataMutex); 
+      }
         
-        //Send data to Firebase
+      if (validData) {
         Serial.println("Sending data to Firebase...");
         
-        // DHT Sensor 1 data
-        String temp1Path = databasePath + "/sensor1/temperature";
-        String hum1Path = databasePath + "/sensor1/humidity";
-        Database.set<float>(aClient, temp1Path, temp1, processData, "DHT1_Temperature");
-        Database.set<float>(aClient, hum1Path, hum1, processData, "DHT1_Humidity");
-        
-        // DHT Sensor 2 data
-        String temp2Path = databasePath + "/sensor2/temperature";
-        String hum2Path = databasePath + "/sensor2/humidity";
-        Database.set<float>(aClient, temp2Path, temp2, processData, "DHT2_Temperature");
-        Database.set<float>(aClient, hum2Path, hum2, processData, "DHT2_Humidity");
-        
-        // DHT Sensor 3 data
-        String temp3Path = databasePath + "/sensor3/temperature";
-        String hum3Path = databasePath + "/sensor3/humidity";
-        Database.set<float>(aClient, temp3Path, temp3, processData, "DHT3_Temperature");
-        Database.set<float>(aClient, hum3Path, hum3, processData, "DHT3_Humidity");
+        unsigned long timestamp = getEpochTime();
+        String timestampStr = String(timestamp);
+
+        String latestPath = "/latest/session_001";
+        String logPath = "/sensor_logs/session_001/" + timestampStr;
+
+        // Latest data paths
+        Database.set<float>(aClient, latestPath + "/temperature", avgTemp, processData, "Latest_Temp");
+        Database.set<float>(aClient, latestPath + "/humidity", avgHum, processData, "Latest_Hum");
+        Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Latest_Time");
+
+        // Log data paths
+        Database.set<float>(aClient, logPath + "/temperature", avgTemp, processData, "Log_Temp");
+        Database.set<float>(aClient, logPath + "/humidity", avgHum, processData, "Log_Hum");
+        Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Log_Time");
         
         Serial.println("Data sent successfully!");
+        Serial.println("Sent: Temp = " + String(avgTemp) + "°C");
+        Serial.print(" Hum = " + String(avgHum) + "%");
+        Serial.print(" at " + timestampStr);
       }
     } else {
       Serial.println("Waiting for Firebase authentication...");
     }
     
-    vTaskDelay(pdMS_TO_TICKS(8000)); //Send every 8 seconds
+    vTaskDelay(pdMS_TO_TICKS(sendFirebase));
   }
 }
 
@@ -241,4 +246,11 @@ void processData(AsyncResult &aResult) {
     Firebase.printf("task: %s, payload: %s\n", 
                     aResult.uid().c_str(), 
                     aResult.c_str());
+}
+
+// Get current epoch time
+unsigned long getEpochTime() {
+  time_t now;
+  time(&now);
+  return now;
 }

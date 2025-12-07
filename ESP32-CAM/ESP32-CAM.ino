@@ -260,14 +260,14 @@ void initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 10000000; // 10MHz lebih stabil
+  config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_LATEST;
 
   if (psramFound()) {
     config.frame_size = FRAMESIZE_UXGA;
     config.jpeg_quality = 10;
-    config.fb_count = 2; // Pakai 2 buffer di PSRAM
+    config.fb_count = 2;
   } else {
     config.frame_size = FRAMESIZE_SVGA;
     config.jpeg_quality = 12;
