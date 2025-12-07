@@ -8,13 +8,9 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
-
-/*In MQ135 library, make sure to set the 
-ATMOCO2 value according to the latest global 
-CO2 level and change the rzero=5804.99, rload=22.0*/
 #include <MQ135.h>
 
-#include "secrets.h" // Make the secrets file
+#include "secrets.h" 
 
 #define WIFI_SSID SSID_WIFI
 #define WIFI_PASSWORD PASSWORD_WIFI
@@ -24,16 +20,14 @@ CO2 level and change the rzero=5804.99, rload=22.0*/
 #define USER_EMAIL EMAIL_USER
 #define USER_PASSWORD PASSWORD_USER
 
-// Pins definition for MQ-4 and MQ-135 sensors
-// Use ADC1 pins only — ADC2 is unavailable while Wi‑Fi is active on ESP32
-// Recommended ADC1 GPIOs: 32, 33, 34, 35, 36, 39 (input-only for 34..39)
-#define MQ4_PIN1   32 // ADC1_CH4
-#define MQ4_PIN2   33 // ADC1_CH5
-#define MQ4_PIN3   34 // ADC1_CH6 (input-only)
+// Pin Definitions (ADC1 Only)
+#define MQ4_PIN1   32 
+#define MQ4_PIN2   33 
+#define MQ4_PIN3   34 
 
-#define MQ135_PIN1 35 // ADC1_CH7 (input-only)
-#define MQ135_PIN2 36 // ADC1_CH0 (input-only) or VP pin
-#define MQ135_PIN3 39 // ADC1_CH3 (input-only) or VN pin
+#define MQ135_PIN1 35 
+#define MQ135_PIN2 36 
+#define MQ135_PIN3 39 
 
 // Firebase components
 FirebaseApp app;
@@ -51,48 +45,43 @@ TaskHandle_t mq135_1_TaskHandle, mq135_2_TaskHandle, mq135_3_TaskHandle;
 TaskHandle_t firebaseLoopTaskHandle;
 TaskHandle_t firebaseSendTaskHandle;
 
-// Mutex for protecting sensor data
+// Mutex
 SemaphoreHandle_t sensorDataMutex;
 
-// Struct for MQ-4 sensors (analog reading)
+// Structs
 struct MQ4SensorParams{
-  int pin;                  // ADC Pin
-  int* valueOut;            // Value Output
-  const char* sensorName;   // Sensor name
+  int pin;
+  int* valueOut;
+  const char* sensorName;
 };
 
-// Struct for MQ-135 sensors (using library)
 struct MQ135SensorParams{
-  MQ135* gasSensor;         // MQ135 object pointer
-  float* rzeroOut;          // RZero value output
-  float* ppmOut;            // PPM value output
-  const char* sensorName;   // Sensor name
+  int pin;
+  float* rzeroOut;
+  float* valueOut;
+  const char* sensorName;
 };
 
-// Variables for MQ-4 (analog values)
-int mq4_value1, mq4_value2, mq4_value3;
+// Variables
+// MQ-4 Variables
+int mq4_val1, mq4_val2, mq4_val3; 
 
-// Variables for MQ-135 (RZero and PPM values)
+// MQ-135 Variables
 float mq135_rzero1, mq135_rzero2, mq135_rzero3;
-float mq135_ppm1, mq135_ppm2, mq135_ppm3;
-
-// MQ135 sensor objects
-MQ135 mq135_1(MQ135_PIN1);
-MQ135 mq135_2(MQ135_PIN2);
-MQ135 mq135_3(MQ135_PIN3);
+float mq135_val1, mq135_val2, mq135_val3;
 
 String uid;
 String databasePath;
 
-// MQ-4 (Methane) Sensor Parameters
-MQ4SensorParams p_mq4_1 = {MQ4_PIN1, &mq4_value1, "MQ-4 (1)"};
-MQ4SensorParams p_mq4_2 = {MQ4_PIN2, &mq4_value2, "MQ-4 (2)"};
-MQ4SensorParams p_mq4_3 = {MQ4_PIN3, &mq4_value3, "MQ-4 (3)"};
+// MQ-4 Parameters
+MQ4SensorParams mq4_1 = {MQ4_PIN1, &mq4_val1, "MQ-4 (1)"};
+MQ4SensorParams mq4_2 = {MQ4_PIN2, &mq4_val2, "MQ-4 (2)"};
+MQ4SensorParams mq4_3 = {MQ4_PIN3, &mq4_val3, "MQ-4 (3)"};
 
-// MQ-135 (Air Quality) Sensor Parameters
-MQ135SensorParams p_mq135_1 = {&mq135_1, &mq135_rzero1, &mq135_ppm1, "MQ-135 (1)"};
-MQ135SensorParams p_mq135_2 = {&mq135_2, &mq135_rzero2, &mq135_ppm2, "MQ-135 (2)"};
-MQ135SensorParams p_mq135_3 = {&mq135_3, &mq135_rzero3, &mq135_ppm3, "MQ-135 (3)"};
+// MQ-135 Parameters
+MQ135SensorParams mq135_1 = {MQ135_PIN1, &mq135_rzero1, &mq135_val1, "MQ-135 (1)"};
+MQ135SensorParams mq135_2 = {MQ135_PIN2, &mq135_rzero2, &mq135_val2, "MQ-135 (2)"};
+MQ135SensorParams mq135_3 = {MQ135_PIN3, &mq135_rzero3, &mq135_val3, "MQ-135 (3)"};
 
 // Functions Declaration
 void readMQ4Sensor(void *pvParameters);
@@ -104,15 +93,12 @@ void processData(AsyncResult &aResult);
 void setup(){
   Serial.begin(115200);
 
-  // Create mutex before starting tasks
   sensorDataMutex = xSemaphoreCreateMutex();
   if (sensorDataMutex == NULL) {
     Serial.println("Failed to create mutex!");
     while(1);
   }
 
-  // Use simple INPUT for ADC pins. Pins 34..39 are input-only and don't
-  // support internal pull-ups/pull-downs on many ESP32 modules.
   pinMode(MQ4_PIN1, INPUT_PULLDOWN);
   pinMode(MQ4_PIN2, INPUT_PULLDOWN);
   pinMode(MQ4_PIN3, INPUT_PULLDOWN);
@@ -121,7 +107,6 @@ void setup(){
   pinMode(MQ135_PIN2, INPUT_PULLDOWN);
   pinMode(MQ135_PIN3, INPUT_PULLDOWN);
 
-  // Connect to Wi-Fi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println("Connecting to Wi-Fi");
   while (WiFi.status() != WL_CONNECTED) {
@@ -129,143 +114,122 @@ void setup(){
     delay(500);
   }
   Serial.println("\nWiFi connected!");
-  Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
   ssl_client.setInsecure();
   ssl_client.setHandshakeTimeout(5);
 
-  // Initialize Firebase
   initializeApp(aClient, app, getAuth(user_auth), processData, "🔐 authTask");
   app.getApp<RealtimeDatabase>(Database);
   Database.url(DATABASE_URL);
 
-  // Create tasks for reading MQ-4 sensors (analog)
-  xTaskCreatePinnedToCore(readMQ4Sensor, "Task MQ-4 (1)", 4096, &p_mq4_1, 1, &mq4_1_TaskHandle, 1);
-  xTaskCreatePinnedToCore(readMQ4Sensor, "Task MQ-4 (2)", 4096, &p_mq4_2, 1, &mq4_2_TaskHandle, 1);
-  xTaskCreatePinnedToCore(readMQ4Sensor, "Task MQ-4 (3)", 4096, &p_mq4_3, 1, &mq4_3_TaskHandle, 1);
+  // MQ-4 Tasks
+  xTaskCreatePinnedToCore(readMQ4Sensor, "Task_MQ4_1", 4096, &mq4_1, 1, &mq4_1_TaskHandle, 1);
+  xTaskCreatePinnedToCore(readMQ4Sensor, "Task_MQ4_2", 4096, &mq4_2, 1, &mq4_2_TaskHandle, 1);
+  xTaskCreatePinnedToCore(readMQ4Sensor, "Task_MQ4_3", 4096, &mq4_3, 1, &mq4_3_TaskHandle, 1);
 
-  // Create tasks for reading MQ-135 sensors (using library)
-  xTaskCreatePinnedToCore(readMQ135Sensor, "Task MQ-135 (1)", 4096, &p_mq135_1, 1, &mq135_1_TaskHandle, 1);
-  xTaskCreatePinnedToCore(readMQ135Sensor, "Task MQ-135 (2)", 4096, &p_mq135_2, 1, &mq135_2_TaskHandle, 1);
-  xTaskCreatePinnedToCore(readMQ135Sensor, "Task MQ-135 (3)", 4096, &p_mq135_3, 1, &mq135_3_TaskHandle, 1);
+  // MQ-135 Tasks
+  xTaskCreatePinnedToCore(readMQ135Sensor, "Task_MQ135_1", 4096, &mq135_1, 1, &mq135_1_TaskHandle, 1);
+  xTaskCreatePinnedToCore(readMQ135Sensor, "Task_MQ135_2", 4096, &mq135_2, 1, &mq135_2_TaskHandle, 1);
+  xTaskCreatePinnedToCore(readMQ135Sensor, "Task_MQ135_3", 4096, &mq135_3, 1, &mq135_3_TaskHandle, 1);
 
-  // Create Firebase loop task (maintains connection)
+  // Firebase Tasks
   xTaskCreatePinnedToCore(firebaseLoopTask, "Firebase Loop", 12000, NULL, 2, &firebaseLoopTaskHandle, 0);
-  
-  // Create Firebase send task (sends data every 8 seconds)
   xTaskCreatePinnedToCore(firebaseSendTask, "Firebase Send", 12000, NULL, 1, &firebaseSendTaskHandle, 0);
 }
 
-void loop(){
-}
+void loop(){}
 
-// TASK: Read MQ-4 Sensor (analog reading)
-// Runs every 2 seconds, updates shared variables with mutex protection
+// Read MQ-4 Sensor
 void readMQ4Sensor(void *pvParameters){
   MQ4SensorParams* params = (MQ4SensorParams*)pvParameters;
 
   while (1){
-    int temp = analogRead(params->pin);
+    int raw = analogRead(params->pin);
+    
+    int percentage = map(raw, 200, 10000, 0, 100);
+    percentage = constrain(percentage, 0, 100);
 
-    // Lock mutex before updating shared variables
     if(xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-      *(params->valueOut) = temp;
-      xSemaphoreGive(sensorDataMutex); // Unlock mutex
+      *(params->valueOut) = percentage;
+      xSemaphoreGive(sensorDataMutex); 
     }
 
-    // Print the reading to the Serial Monitor
-    Serial.println(String(params->sensorName) + " reading: " + String(temp));
-
-    vTaskDelay(pdMS_TO_TICKS(2000)); // Delay for 2 seconds
+    Serial.println(String(params->sensorName) + " Raw: " + String(raw) + " -> " + String(percentage) + "%");
+    vTaskDelay(pdMS_TO_TICKS(2000)); 
   }
 }
 
-// TASK: Read MQ-135 Sensor
+// Read MQ-135 Sensor
 void readMQ135Sensor(void *pvParameters){
   MQ135SensorParams* params = (MQ135SensorParams*)pvParameters;
+  MQ135 sensor(params->pin);
 
   while (1){
-    float rzero = params->gasSensor->getRZero();
-    float ppm = params->gasSensor->getPPM();
+    float rzero = sensor.getRZero();
+    float ppm = sensor.getPPM();
 
-    // Lock mutex before updating shared variables
+    // --- KONVERSI KE PERSENTASE (Linear 0-100%) ---
+    // Asumsi max PPM 10000 = 100%
+    int percentage = map((long)ppm, 400, 2000, 0, 100); 
+    percentage = constrain(percentage, 0, 100);
+
     if(xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
       *(params->rzeroOut) = rzero;
-      *(params->ppmOut) = ppm;
-      xSemaphoreGive(sensorDataMutex); // Unlock mutex
+      *(params->valueOut= (float)percentage;
+      xSemaphoreGive(sensorDataMutex); 
     }
 
-    Serial.println(String(params->sensorName) + " RZero: " + String(rzero));
-    Serial.println(String(params->sensorName) + " PPM: " + String(ppm));
-
-    vTaskDelay(pdMS_TO_TICKS(2000)); // Delay for 2 seconds
+    Serial.println(String(params->sensorName) + " PPM: " + String(ppm) + " -> " + String(percentage) + "%");
+    vTaskDelay(pdMS_TO_TICKS(2000)); 
   }
 }
 
-// Maintains Firebase authentication and handles async operations
 void firebaseLoopTask(void *pvParameters) {
   Serial.println("Firebase Loop Task started");
-  
   while(1) {
-    app.loop(); // Keep Firebase connection alive
-    vTaskDelay(pdMS_TO_TICKS(10)); // Short delay to prevent watchdog timeout
+    app.loop(); 
+    vTaskDelay(pdMS_TO_TICKS(10)); 
   }
 }
 
-// Sends all sensor data to Firebase every 8 seconds
 void firebaseSendTask(void *pvParameters) {
   Serial.println("Firebase Send Task started");
   
   while(1) {
-    // Wait for Firebase to be ready
     if (app.ready()) {
       
-      // Get User UID (only once or when changed)
       if (uid.isEmpty()) {
         uid = app.getUid().c_str();
-        Firebase.printf("User UID: %s\n", uid.c_str());
+        Serial.printf("User UID: %s\n", uid.c_str());
         databasePath = "UsersData/" + uid;
       }
       
-      // Lock mutex to read all sensor data safely
+      int m4_1, m4_2, m4_3;
+      float m135_p1, m135_p2, m135_p3;
+
       if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-        // Copy MQ-4 sensor data to local variables
-        int mq4_1 = mq4_value1;
-        int mq4_2 = mq4_value2;
-        int mq4_3 = mq4_value3;
+        m4_1 = mq4_val1;
+        m4_2 = mq4_val2;
+        m4_3 = mq4_val3;
         
-        // Copy MQ-135 sensor data to local variables (only ppm needed)
-        float mq135_p1 = mq135_ppm1;
-        float mq135_p2 = mq135_ppm2;
-        float mq135_p3 = mq135_ppm3;
+        m135_p1 = mq135_val1;
+        m135_p2 = mq135_val2;
+        m135_p3 = mq135_val3;
         
-        xSemaphoreGive(sensorDataMutex); // Release mutex immediately
+        xSemaphoreGive(sensorDataMutex); 
         
-        // Send data to Firebase
-        Serial.println("Sending data to Firebase...");
+        Serial.println("Sending PERCENTAGE data to ORIGINAL PATHS...");
         
-        // MQ-4 Sensor data (Methane - analog values)
-        String mq4_1_Path = databasePath + "/mq4_sensor1/value";
-        Database.set<int>(aClient, mq4_1_Path, mq4_1, processData, "MQ4_1_Value");
+        // MQ-4 Sensor data
+        Database.set<int>(aClient, databasePath + "/mq4_sensor1/value", m4_1, processData, "MQ4_1_Val");
+        Database.set<int>(aClient, databasePath + "/mq4_sensor2/value", m4_2, processData, "MQ4_2_Val");
+        Database.set<int>(aClient, databasePath + "/mq4_sensor3/value", m4_3, processData, "MQ4_3_Val");
         
-        String mq4_2_Path = databasePath + "/mq4_sensor2/value";
-        Database.set<int>(aClient, mq4_2_Path, mq4_2, processData, "MQ4_2_Value");
-        
-        String mq4_3_Path = databasePath + "/mq4_sensor3/value";
-        Database.set<int>(aClient, mq4_3_Path, mq4_3, processData, "MQ4_3_Value");
-        
-        // MQ-135 Sensor 1 data
-        String mq135_1_ppm_Path = databasePath + "/mq135_sensor1/ppm";
-        Database.set<float>(aClient, mq135_1_ppm_Path, mq135_p1, processData, "MQ135_1_PPM");
-        
-        // MQ-135 Sensor 2 data
-        String mq135_2_ppm_Path = databasePath + "/mq135_sensor2/ppm";
-        Database.set<float>(aClient, mq135_2_ppm_Path, mq135_p2, processData, "MQ135_2_PPM");
-        
-        // MQ-135 Sensor 3 data
-        String mq135_3_ppm_Path = databasePath + "/mq135_sensor3/ppm";
-        Database.set<float>(aClient, mq135_3_ppm_Path, mq135_p3, processData, "MQ135_3_PPM");
+        // MQ-135 Sensor data 
+        Database.set<float>(aClient, databasePath + "/mq135_sensor1/ppm", m135_p1, processData, "MQ135_1_PPM");
+        Database.set<float>(aClient, databasePath + "/mq135_sensor2/ppm", m135_p2, processData, "MQ135_2_PPM");
+        Database.set<float>(aClient, databasePath + "/mq135_sensor3/ppm", m135_p3, processData, "MQ135_3_PPM");
         
         Serial.println("Data sent successfully!");
       }
@@ -273,34 +237,16 @@ void firebaseSendTask(void *pvParameters) {
       Serial.println("Waiting for Firebase authentication...");
     }
     
-    vTaskDelay(pdMS_TO_TICKS(8000)); // Send every 8 seconds
+    vTaskDelay(pdMS_TO_TICKS(8000)); 
   }
 }
 
-// Callback function for Firebase operations
 void processData(AsyncResult &aResult) {
-  if (!aResult.isResult())
-    return;
-    
-  if (aResult.isEvent())
-    Firebase.printf("Event task: %s, msg: %s, code: %d\n", 
-                    aResult.uid().c_str(), 
-                    aResult.eventLog().message().c_str(), 
-                    aResult.eventLog().code());
-                    
-  if (aResult.isDebug())
-    Firebase.printf("Debug task: %s, msg: %s\n", 
-                    aResult.uid().c_str(), 
-                    aResult.debug().c_str());
-                    
-  if (aResult.isError())
-    Firebase.printf("Error task: %s, msg: %s, code: %d\n", 
-                    aResult.uid().c_str(), 
-                    aResult.error().message().c_str(), 
-                    aResult.error().code());
-                    
-  if (aResult.available())
-    Firebase.printf("task: %s, payload: %s\n", 
-                    aResult.uid().c_str(), 
-                    aResult.c_str());
+  if (!aResult.isResult()) return;
+  if (aResult.isEvent()) {
+    Firebase.printf("Event: %s\n", aResult.eventLog().message().c_str());
+  }
+  if (aResult.isError()) {
+    Firebase.printf("Error: %s\n", aResult.error().message().c_str());
+  }
 }
