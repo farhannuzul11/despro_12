@@ -8,6 +8,15 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
+
+/* 
+For Calculating CO2 concentration,
+in the MQ135 library, change the rzero and rload value
+rzero = 46.0 & rload = 22.0 (based on calibration)
+
+Also change the ATMOCO2 value according to environment
+Depok = 478.70 ppm (based on: https://lib.fkm.ui.ac.id/detail?id=131080&lokasi=lokal)
+*/
 #include <MQ135.h>
 #include <time.h>
 
@@ -207,54 +216,56 @@ void firebaseLoopTask(void *pvParameters) {
 }
 
 void firebaseSendTask(void *pvParameters) {
-  Serial.println("Firebase Send Task started");
-  
   while(1) {
     if (app.ready()) {
-      
-      float avgMQ4 = 0.0;
-      float avgMQ135 = 0.0;
-      bool validData = false;
+      int methane1, methane2, methane3;
+      float co2_1, co2_2, co2_3;
 
       if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-        // Average MQ-4 (Methane)
-        avgMQ4 = (mq4_val1 + mq4_val2 + mq4_val3) / 3.0;
+        methane1 = mq4_val1; 
+        methane2 = mq4_val2; 
+        methane3 = mq4_val3;
         
-        // Average MQ-135 (CO2/Air Quality)
-        avgMQ135 = (mq135_val1 + mq135_val2 + mq135_val3) / 3.0;
-        
-        if (avgMQ4 >= 0 && avgMQ135 >= 0) {
-            validData = true;
-        }
+        co2_1 = mq135_val1; 
+        co2_2 = mq135_val2; 
+        co2_3 = mq135_val3;
         xSemaphoreGive(sensorDataMutex); 
       }
       
-      if (validData) {
-        Serial.println("Sending data to Firebase...");
-        
-        unsigned long timestamp = getEpochTime();
-        String timestampStr = String(timestamp);
+      Serial.println("Sending Data...");
+      unsigned long timestamp = getEpochTime();
+      String timestampStr = String(timestamp);
 
-        String latestPath = "/latest/session_001";
-        String logPath = "/sensor_logs/session_001/" + timestampStr;
-        
-        // Latest Data
-        Database.set<float>(aClient, latestPath + "/methane", avgMQ4, processData, "Latest_Methane");
-        Database.set<float>(aClient, latestPath + "/co2", avgMQ135, processData, "Latest_CO2");
-        Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Latest_Time");
+      String latestPath = "/latest/session_001";
+      String logPath = "/sensor_logs/session_001/" + timestampStr;
 
-        // Log Data
-        Database.set<float>(aClient, logPath + "/methane", avgMQ4, processData, "Log_Methane");
-        Database.set<float>(aClient, logPath + "/co2", avgMQ135, processData, "Log_CO2");
-        Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Log_Time");
-        
-        Serial.println("Data sent successfully!");
-        Serial.printf("Sent: Methane=%.2f, CO2=%.2f, Time=%lu\n", avgMQ4, avgMQ135, timestamp);
-      }
-    } else {
-      Serial.println("Waiting for Firebase authentication...");
+      // Sensor 1
+      Database.set<int>(aClient, latestPath + "/sensor1/methane", methane1, processData, "Latest_MQ4_1");
+      Database.set<float>(aClient, latestPath + "/sensor1/co2", co2_1, processData, "Latest_MQ135_1");
+
+      Database.set<int>(aClient, logPath + "/sensor1/methane", methane1, processData, "Log_MQ4_1");
+      Database.set<float>(aClient, logPath + "/sensor1/co2", co2_1, processData, "Log_MQ135_1");
+
+      // Sensor 2
+      Database.set<int>(aClient, latestPath + "/sensor2/methane", methane2, processData, "Latest_MQ4_2");
+      Database.set<float>(aClient, latestPath + "/sensor2/co2", co2_2, processData, "Latest_MQ135_2");
+
+      Database.set<int>(aClient, logPath + "/sensor2/methane", methane2, processData, "Log_M4_2");
+      Database.set<float>(aClient, logPath + "/sensor2/co2", co2_2, processData, "Log_135_2");
+
+      // Sensor 3
+      Database.set<int>(aClient, latestPath + "/sensor3/methane", methane3, processData, "Latest_MQ4_3");
+      Database.set<float>(aClient, latestPath + "/sensor3/co2", co2_3, processData, "Latest_MQ135_3");
+
+      Database.set<int>(aClient, logPath + "/sensor3/methane", methane3, processData, "Log_Q4_3");
+      Database.set<float>(aClient, logPath + "/sensor3/co2", co2_3, processData, "Log_MQ135_3");
+
+      // Timestamp
+      Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Time");
+      Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Time");
+
+      Serial.println("Data sent!");
     }
-    
     vTaskDelay(pdMS_TO_TICKS(sendFirebase)); 
   }
 }

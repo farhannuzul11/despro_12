@@ -168,54 +168,53 @@ void firebaseLoopTask(void *pvParameters) {
 
 // Sends all sensor data to Firebase every 15 seconds
 void firebaseSendTask(void *pvParameters) {
-  Serial.println("Firebase Send Task started");
-  
   while(1) {
-    //Wait for Firebase to be ready
     if (app.ready()) {
-      float avgTemp = 0.0;
-      float avgHum = 0.0;
-      bool validData = false;
-
-      //Lock mutex to read all sensor data safely
+      float t1, h1, t2, h2, t3, h3;
+      
       if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-        avgTemp = (temperature1 + temperature2 + temperature3) / 3.0;
-        avgHum = (humidity1 + humidity2 + humidity3) / 3.0;
+        t1 = temperature1; 
+        t2 = temperature2; 
+        t3 = temperature3; 
+        
+        h1 = humidity1;
+        h2 = humidity2; 
+        h3 = humidity3;
 
-        if (!isnan(avgTemp) && !isnan(avgHum) && avgTemp > 0) {
-            validData = true;
-        }
         xSemaphoreGive(sensorDataMutex); 
       }
-        
-      if (validData) {
-        Serial.println("Sending data to Firebase...");
-        
-        unsigned long timestamp = getEpochTime();
-        String timestampStr = String(timestamp);
+      
+      Serial.println("Sending Data...");
+      unsigned long timestamp = getEpochTime();
+      String timestampStr = String(timestamp);
 
-        String latestPath = "/latest/session_001";
-        String logPath = "/sensor_logs/session_001/" + timestampStr;
+      String latestPath = "/latest/session_001";
+      String logPath = "/sensor_logs/session_001/" + timestampStr;
 
-        // Latest data paths
-        Database.set<float>(aClient, latestPath + "/temperature", avgTemp, processData, "Latest_Temp");
-        Database.set<float>(aClient, latestPath + "/humidity", avgHum, processData, "Latest_Hum");
-        Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Latest_Time");
+      // Sensor 1
+      Database.set<float>(aClient, latestPath + "/sensor1/temperature", t1, processData, "Latest_T1");
+      Database.set<float>(aClient, latestPath + "/sensor1/humidity", h1, processData, "Latest_H1");
+      Database.set<float>(aClient, logPath + "/sensor1/temperature", t1, processData, "Log_T1");
+      Database.set<float>(aClient, logPath + "/sensor1/humidity", h1, processData, "Log_H1");
 
-        // Log data paths
-        Database.set<float>(aClient, logPath + "/temperature", avgTemp, processData, "Log_Temp");
-        Database.set<float>(aClient, logPath + "/humidity", avgHum, processData, "Log_Hum");
-        Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Log_Time");
-        
-        Serial.println("Data sent successfully!");
-        Serial.println("Sent: Temp = " + String(avgTemp) + "°C");
-        Serial.print(" Hum = " + String(avgHum) + "%");
-        Serial.print(" at " + timestampStr);
-      }
-    } else {
-      Serial.println("Waiting for Firebase authentication...");
+      // Sensor 2
+      Database.set<float>(aClient, latestPath + "/sensor2/temperature", t2, processData, "Latest_T2");
+      Database.set<float>(aClient, latestPath + "/sensor2/humidity", h2, processData, "Latest_H2");
+      Database.set<float>(aClient, logPath + "/sensor2/temperature", t2, processData, "Log_T2");
+      Database.set<float>(aClient, logPath + "/sensor2/humidity", h2, processData, "Log_H2");
+
+      // Sensor 3
+      Database.set<float>(aClient, latestPath + "/sensor3/temperature", t3, processData, "Latest_T3");
+      Database.set<float>(aClient, latestPath + "/sensor3/humidity", h3, processData, "Latest_H3");
+      Database.set<float>(aClient, logPath + "/sensor3/temperature", t3, processData, "Log_T3");
+      Database.set<float>(aClient, logPath + "/sensor3/humidity", h3, processData, "Log_H3");
+
+      // Timestamp
+      Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Time");
+      Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Time");
+      
+      Serial.println("Data sent!");
     }
-    
     vTaskDelay(pdMS_TO_TICKS(sendFirebase));
   }
 }

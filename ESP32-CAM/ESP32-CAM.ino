@@ -8,7 +8,8 @@
 #include <FirebaseClient.h>
 #include <FS.h>
 #include <LittleFS.h>
-#include "esp_camera.h"
+#include "esp_camera.h" 
+#include <time.h>
 
 #include "secrets.h" // Make the secrets.h file
 
@@ -145,11 +146,13 @@ void loop() {
 
     // Take photo & Save
     if (capturePhotoSaveLittleFS()) {
-      
+      // Get current timestamp
+      unsigned long timestamp = getEpochTime();
+
       // Prepare unique filename
-      uploadFileName = STORAGE_PATH + String(millis()) + ".jpg";
+      uploadFileName = STORAGE_PATH + String(timestamp) + ".jpg";
       
-      Serial.printf("Uploading to: %s\n", uploadFileName.c_str());
+      Serial.println("Uploading: " + uploadFileName);
 
       // Start upload (Asynchronous)
       storage.upload(
@@ -263,7 +266,7 @@ void initCamera() {
   config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_LATEST;
-
+  
   if (psramFound()) {
     config.frame_size = FRAMESIZE_UXGA;
     config.jpeg_quality = 10;
@@ -300,4 +303,11 @@ void file_operation_callback(File &file, const char *filename, file_operating_mo
     default: break;
   }
   file = myFile;
+}
+
+// Helper to get Unix Timestamp
+unsigned long getEpochTime() {
+  time_t now;
+  time(&now);
+  return now;
 }

@@ -168,43 +168,40 @@ void firebaseSendTask(void *pvParameters) {
   
   while(1) {
     if (app.ready()) {
-      
-      int avgMoisture = 0;
-      bool validData = false;
+      int soil1, soil2, soil3;
       
       if (xSemaphoreTake(sensorDataMutex, portMAX_DELAY) == pdTRUE) {
-        avgMoisture = (soil_moist1 + soil_moist2 + soil_moist3) / 3;
-        
-        if (avgMoisture >= 0) {
-            validData = true;
-        }
+        soil1 = soil_moist1; 
+        soil2 = soil_moist2; 
+        soil3 = soil_moist3;
         xSemaphoreGive(sensorDataMutex); 
       }
       
-      if (validData) {
-        Serial.println("Sending Soil Data...");
+      Serial.println("Sending Data...");
+      
+      unsigned long timestamp = getEpochTime();
+      String timestampStr = String(timestamp);
+      
+      String latestPath = "/latest/session_001";
+      String logPath = "/sensor_logs/session_001/" + timestampStr;
+      
+      // Sensor 1
+      Database.set<int>(aClient, latestPath + "/sensor1/moisture", soil1, processData, "L_S1");
+      Database.set<int>(aClient, logPath + "/sensor1/moisture", soil1, processData, "Log_S1");
 
-        unsigned long timestamp = getEpochTime();
-        String timestampStr = String(timestamp);
-        
-        String latestPath = "/latest/session_001";
-        String logPath = "/sensor_logs/session_001/" + timestampStr;
-        
-        // Latest Data paths
-        Database.set<int>(aClient, latestPath + "/moisture", avgMoisture, processData, "Latest_Soil");
-        Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Latest_Time");
-
-        // Log Data paths
-        Database.set<int>(aClient, logPath + "/moisture", avgMoisture, processData, "Log_Soil");
-        Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Log_Time");
-        
-        Serial.println("Data sent successfully!");
-        Serial.println("Sent: Soil Moisture = " + String(avgMoisture) + "%");
-      }
-    } else {
-      Serial.println("Waiting for Firebase authentication...");
-    }
+      // Sensor 2
+      Database.set<int>(aClient, latestPath + "/sensor2/moisture", soil2, processData, "L_S2");
+      Database.set<int>(aClient, logPath + "/sensor2/moisture", soil2, processData, "Log_S2");
+      // Sensor 3
+      Database.set<int>(aClient, latestPath + "/sensor3/moisture", soil3, processData, "L_S3");
+      Database.set<int>(aClient, logPath + "/sensor3/moisture", soil3, processData, "Log_S3");
+      
+      Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Time");
+      Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Time");
+      
+      Serial.println("Data sent!");
     
+    }
     vTaskDelay(pdMS_TO_TICKS(sendFirebase)); 
   }
 }
