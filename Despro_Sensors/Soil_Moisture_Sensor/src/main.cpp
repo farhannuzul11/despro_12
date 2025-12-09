@@ -9,6 +9,8 @@
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
 #include <time.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 #include "secrets.h" // Make the secrets file
 
@@ -24,6 +26,8 @@
 #define SOIL_PIN1 32
 #define SOIL_PIN2 33
 #define SOIL_PIN3 34
+
+#define FIREBASE_SEND_INTERVAL 15000
 
 // Firebase components
 FirebaseApp app;
@@ -58,13 +62,13 @@ SemaphoreHandle_t sensorDataMutex;
 int soil_moist1, soil_moist2, soil_moist3;
 String uid;
 String databasePath;
-int sendFirebase = 15000;
 
 // Functions Declaration
 void readSoilHumid(void *pvParameters);
 void firebaseLoopTask(void *pvParameters);
 void firebaseSendTask(void *pvParameters);
 void processData(AsyncResult &aResult);
+unsigned long getEpochTime();
 
 // Parameters for each Soil sensor task
 SoilParams p_soil1 = {SOIL_PIN1, &soil_moist1, 35, 163, "Soil Sensor 1"};
@@ -186,23 +190,26 @@ void firebaseSendTask(void *pvParameters) {
       String logPath = "/sensor_logs/session_001/" + timestampStr;
       
       // Sensor 1
-      Database.set<int>(aClient, latestPath + "/sensor1/moisture", soil1, processData, "L_S1");
+      Database.set<int>(aClient, latestPath + "/sensor1/moisture", soil1, processData, "Latest_S1");
       Database.set<int>(aClient, logPath + "/sensor1/moisture", soil1, processData, "Log_S1");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       // Sensor 2
-      Database.set<int>(aClient, latestPath + "/sensor2/moisture", soil2, processData, "L_S2");
+      Database.set<int>(aClient, latestPath + "/sensor2/moisture", soil2, processData, "Latest_S2");
       Database.set<int>(aClient, logPath + "/sensor2/moisture", soil2, processData, "Log_S2");
+      vTaskDelay(pdMS_TO_TICKS(50));
+
       // Sensor 3
-      Database.set<int>(aClient, latestPath + "/sensor3/moisture", soil3, processData, "L_S3");
+      Database.set<int>(aClient, latestPath + "/sensor3/moisture", soil3, processData, "Latest_S3");
       Database.set<int>(aClient, logPath + "/sensor3/moisture", soil3, processData, "Log_S3");
+      vTaskDelay(pdMS_TO_TICKS(50));
       
       Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Time");
       Database.set<int>(aClient, logPath + "/timestamp", timestamp, processData, "Time");
       
       Serial.println("Data sent!");
-    
     }
-    vTaskDelay(pdMS_TO_TICKS(sendFirebase)); 
+    vTaskDelay(pdMS_TO_TICKS(FIREBASE_SEND_INTERVAL)); 
   }
 }
 // Callback function for Firebase operations

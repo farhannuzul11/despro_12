@@ -8,6 +8,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 /* 
 For Calculating CO2 concentration,
@@ -37,7 +39,9 @@ Depok = 478.70 ppm (based on: https://lib.fkm.ui.ac.id/detail?id=131080&lokasi=l
 
 #define MQ135_PIN1 35 
 #define MQ135_PIN2 36 
-#define MQ135_PIN3 39 
+#define MQ135_PIN3 39
+
+#define FIREBASE_SEND_INTERVAL 15000
 
 // Firebase components
 FirebaseApp app;
@@ -82,7 +86,6 @@ float mq135_val1, mq135_val2, mq135_val3;
 
 String uid;
 String databasePath;
-int sendFirebase = 15000; // 15 seconds
 
 // MQ-4 Parameters
 MQ4SensorParams mq4_1 = {MQ4_PIN1, &mq4_val1, "MQ-4 (1)"};
@@ -103,6 +106,7 @@ void processData(AsyncResult &aResult);
 unsigned long getEpochTime();
 
 void setup(){
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(115200);
 
   sensorDataMutex = xSemaphoreCreateMutex();
@@ -242,23 +246,29 @@ void firebaseSendTask(void *pvParameters) {
       // Sensor 1
       Database.set<int>(aClient, latestPath + "/sensor1/methane", methane1, processData, "Latest_MQ4_1");
       Database.set<float>(aClient, latestPath + "/sensor1/co2", co2_1, processData, "Latest_MQ135_1");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       Database.set<int>(aClient, logPath + "/sensor1/methane", methane1, processData, "Log_MQ4_1");
       Database.set<float>(aClient, logPath + "/sensor1/co2", co2_1, processData, "Log_MQ135_1");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       // Sensor 2
       Database.set<int>(aClient, latestPath + "/sensor2/methane", methane2, processData, "Latest_MQ4_2");
       Database.set<float>(aClient, latestPath + "/sensor2/co2", co2_2, processData, "Latest_MQ135_2");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       Database.set<int>(aClient, logPath + "/sensor2/methane", methane2, processData, "Log_M4_2");
       Database.set<float>(aClient, logPath + "/sensor2/co2", co2_2, processData, "Log_135_2");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       // Sensor 3
       Database.set<int>(aClient, latestPath + "/sensor3/methane", methane3, processData, "Latest_MQ4_3");
       Database.set<float>(aClient, latestPath + "/sensor3/co2", co2_3, processData, "Latest_MQ135_3");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
-      Database.set<int>(aClient, logPath + "/sensor3/methane", methane3, processData, "Log_Q4_3");
+      Database.set<int>(aClient, logPath + "/sensor3/methane", methane3, processData, "Log_MQ4_3");
       Database.set<float>(aClient, logPath + "/sensor3/co2", co2_3, processData, "Log_MQ135_3");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       // Timestamp
       Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Time");
@@ -266,7 +276,7 @@ void firebaseSendTask(void *pvParameters) {
 
       Serial.println("Data sent!");
     }
-    vTaskDelay(pdMS_TO_TICKS(sendFirebase)); 
+    vTaskDelay(pdMS_TO_TICKS(FIREBASE_SEND_INTERVAL)); 
   }
 }
 

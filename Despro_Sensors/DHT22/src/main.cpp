@@ -27,6 +27,8 @@
 #define DHTPIN2 22       //Pin for DHT sensor 2
 #define DHTPIN3 23       //Pin for DHT sensor 3
 
+#define FIREBASE_SEND_INTERVAL 15000
+
 //DHT objects
 DHT dht1(DHTPIN1, DHTTYPE);
 DHT dht2(DHTPIN2, DHTTYPE);
@@ -63,7 +65,6 @@ float humidity1, humidity2, humidity3;
 float temperature1, temperature2, temperature3;
 String uid;
 String databasePath;
-int sendFirebase = 15000;
 
 //Parameters for each DHT sensor task
 DhtParams params1 = {&dht1, &humidity1, &temperature1, "DHT 1"};
@@ -75,6 +76,7 @@ void readDHT(void *pvParameters);
 void firebaseLoopTask(void *pvParameters);
 void firebaseSendTask(void *pvParameters);
 void processData(AsyncResult &aResult);
+unsigned long getEpochTime();
 
 void setup(){
   Serial.begin(115200);
@@ -194,20 +196,29 @@ void firebaseSendTask(void *pvParameters) {
       // Sensor 1
       Database.set<float>(aClient, latestPath + "/sensor1/temperature", t1, processData, "Latest_T1");
       Database.set<float>(aClient, latestPath + "/sensor1/humidity", h1, processData, "Latest_H1");
+      vTaskDelay(pdMS_TO_TICKS(50));
+
       Database.set<float>(aClient, logPath + "/sensor1/temperature", t1, processData, "Log_T1");
       Database.set<float>(aClient, logPath + "/sensor1/humidity", h1, processData, "Log_H1");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       // Sensor 2
       Database.set<float>(aClient, latestPath + "/sensor2/temperature", t2, processData, "Latest_T2");
       Database.set<float>(aClient, latestPath + "/sensor2/humidity", h2, processData, "Latest_H2");
+      vTaskDelay(pdMS_TO_TICKS(50));
+      
       Database.set<float>(aClient, logPath + "/sensor2/temperature", t2, processData, "Log_T2");
       Database.set<float>(aClient, logPath + "/sensor2/humidity", h2, processData, "Log_H2");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       // Sensor 3
       Database.set<float>(aClient, latestPath + "/sensor3/temperature", t3, processData, "Latest_T3");
       Database.set<float>(aClient, latestPath + "/sensor3/humidity", h3, processData, "Latest_H3");
+      vTaskDelay(pdMS_TO_TICKS(50));
+     
       Database.set<float>(aClient, logPath + "/sensor3/temperature", t3, processData, "Log_T3");
       Database.set<float>(aClient, logPath + "/sensor3/humidity", h3, processData, "Log_H3");
+      vTaskDelay(pdMS_TO_TICKS(50));
 
       // Timestamp
       Database.set<int>(aClient, latestPath + "/timestamp", timestamp, processData, "Time");
@@ -215,7 +226,7 @@ void firebaseSendTask(void *pvParameters) {
       
       Serial.println("Data sent!");
     }
-    vTaskDelay(pdMS_TO_TICKS(sendFirebase));
+    vTaskDelay(pdMS_TO_TICKS(FIREBASE_SEND_INTERVAL));
   }
 }
 
