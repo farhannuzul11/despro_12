@@ -27,7 +27,7 @@
 #define DHTPIN2 22       //Pin for DHT sensor 2
 #define DHTPIN3 23       //Pin for DHT sensor 3
 
-#define FIREBASE_SEND_INTERVAL 15000
+#define FIREBASE_SEND_INTERVAL 60000 // 1 minute
 
 //DHT objects
 DHT dht1(DHTPIN1, DHTTYPE);
@@ -187,7 +187,8 @@ void firebaseSendTask(void *pvParameters) {
       }
       
       Serial.println("Sending Data...");
-      unsigned long timestamp = getEpochTime();
+      unsigned long rawTime = getEpochTime();
+      unsigned long timestamp = rawTime - (rawTime % 60); // Round down to nearest minute
       String timestampStr = String(timestamp);
 
       String latestPath = "/latest/session_001";

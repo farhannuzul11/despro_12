@@ -41,7 +41,7 @@ Depok = 478.70 ppm (based on: https://lib.fkm.ui.ac.id/detail?id=131080&lokasi=l
 #define MQ135_PIN2 36 
 #define MQ135_PIN3 39
 
-#define FIREBASE_SEND_INTERVAL 15000
+#define FIREBASE_SEND_INTERVAL 60000 // 1 minute
 
 // Firebase components
 FirebaseApp app;
@@ -237,7 +237,8 @@ void firebaseSendTask(void *pvParameters) {
       }
       
       Serial.println("Sending Data...");
-      unsigned long timestamp = getEpochTime();
+      unsigned long rawTime = getEpochTime();
+      unsigned long timestamp = rawTime - (rawTime % 60); // Round down to nearest minute
       String timestampStr = String(timestamp);
 
       String latestPath = "/latest/session_001";

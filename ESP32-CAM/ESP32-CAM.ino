@@ -46,7 +46,7 @@ String uploadFileName = "";
 
 // Timer Variables
 unsigned long lastCaptureTime = 0;
-const unsigned long captureInterval = 30000; 
+const unsigned long captureInterval = 900000; // 15 minutes 
 
 // Functions declarations
 void processData(AsyncResult &aResult);
